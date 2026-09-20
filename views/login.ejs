@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>登录 · 表单管理系统</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%93%8B%3C/text%3E%3C/svg%3E" />
+  <link rel="stylesheet" href="/app.css" />
+</head>
+<body class="login-body">
+  <form class="login-card"
+        x-data="{
+                  user: '', pwd: '', code: '', captchaUrl: '', err: '', busy: false,
+                  init() { this.refreshCaptcha(); },
+                  refreshCaptcha() {
+                    // 直接引用图片地址（时间戳防缓存），客户端零编码环节
+                    this.captchaUrl = '/admin/api/captcha?ts=' + Date.now();
+                    this.code = '';
+                  },
+                  async go() {
+                    this.err = '';
+                    if (!this.code.trim()) { this.err = '请输入验证码'; return; }
+                    this.busy = true;
+                    try {
+                      const res = await fetch('/admin/api/login', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                          username: this.user,
+                          password: this.pwd,
+                          captchaCode: this.code
+                        })
+                      });
+                      if (res.ok) { location.href = '/admin'; return; }
+                      const j = await res.json().catch(() => ({}));
+                      this.err = j.error || '登录失败，请重试';
+                    } catch (e) { this.err = '网络错误，请重试'; }
+                    this.busy = false;
+                    this.refreshCaptcha();
+                  } }"
+        @submit.prevent="go">
+    <div class="login-logo">📋</div>
+    <h1>表单管理系统</h1>
+    <p class="muted">请登录管理员账号</p>
+    <input type="text" class="ipt" placeholder="用户名" autocomplete="username" x-model="user" autofocus />
+    <input type="password" class="ipt" placeholder="密码" autocomplete="current-password" x-model="pwd" />
+    <div class="captcha-row">
+      <input type="text" class="ipt" placeholder="验证码" autocomplete="off" maxlength="4" x-model="code">
+      <img class="captcha-img" alt="验证码" title="看不清？点击刷新"
+           x-show="captchaUrl" :src="captchaUrl" @click="refreshCaptcha()">
+    </div>
+    <button class="btn primary block" type="submit" :disabled="busy" x-text="busy ? '登录中…' : '登 录'"></button>
+    <p class="login-err" x-show="err" x-text="err"></p>
+    <p class="hint">首次启动会自动创建超级管理员（用户名/密码可通过环境变量 ADMIN_USERNAME / ADMIN_PASSWORD 配置），请登录后尽快修改密码</p>
+  </form>
+  <script src="/vendor/alpine.js" defer></script>
+</body>
+</html>

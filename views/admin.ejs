@@ -1,0 +1,600 @@
+<% const FIELD_TYPES = [['text','单行文本'],['textarea','多行文本'],['number','数字'],['email','邮箱'],['phone','手机号'],['date','日期'],['radio','单选'],['checkbox','多选'],['select','下拉选择'],['file','文件上传'],['region','地区（省市县）']]; %>
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>表单管理系统 · 后台 QQ:11189484</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%93%8B%3C/text%3E%3C/svg%3E" />
+  <link rel="stylesheet" href="/app.css" />
+</head>
+<body>
+<div x-data="admin" x-cloak>
+
+  <!-- 顶栏 -->
+  <header class="topbar">
+    <button class="btn" @click="goHome()">🧾 管理后台</button>
+    <div class="topbar-center"><span class="brand-sm" x-text="pageTitle"></span></div>
+    <div class="topbar-right">
+      <template x-if="view === 'list' && has('form:create')"><button class="btn primary" @click="createNew()">＋ 新建表单</button></template>
+      <template x-if="view === 'edit' && has('form:update')"><button class="btn primary" :disabled="saving" @click="save()">保存</button></template>
+      <template x-if="view === 'data' && has('data:export')"><a class="btn" :href="exportHref">⬇ CSV</a></template>
+      <template x-if="view === 'data' && has('data:export')"><a class="btn" :href="exportXlsxHref">⬇ Excel</a></template>
+      <template x-if="view === 'data' && has('data:clear')"><button class="btn danger" @click="clearData()">清空数据</button></template>
+      <template x-if="me && has('admin:manage')"><button class="btn" @click="openAdmins()">管理员</button></template>
+      <template x-if="me && has('admin:manage')"><button class="btn" @click="openAudit()">审计</button></template>
+      <template x-if="me && has('admin:manage')"><button class="btn" @click="openWebhooks()">Webhook</button></template>
+      <template x-if="me"><button class="btn" @click="pwd.open = true">改密码</button></template>
+      <button class="btn" @click="logout()">退出</button>
+    </div>
+  </header>
+
+  <div class="toast" :class="{ show: toast.show, err: toast.type === 'err' }" x-text="toast.text"></div>
+  <div class="page-loading" x-show="loading">加载中…</div>
+
+  <!-- 提交详情弹窗 -->
+  <template x-if="modal">
+    <div class="mask" @click.self="modal = null">
+      <div class="modal">
+        <div class="modal-head">
+          <h3 x-text="'提交详情 #' + modal.id"></h3>
+          <button class="btn xs" @click="modal = null">关闭</button>
+        </div>
+        <div class="muted" x-text="fmtTime(modal.created_at) + ' · IP：' + (modal.ip || '-')"></div>
+        <div class="dl">
+          <template x-for="(item, idx) in modal.rows" :key="idx">
+            <div class="dl-row">
+              <div class="dl-key" x-text="item.key"></div>
+              <div class="dl-val">
+                <a x-show="item.href" :href="item.href" target="_blank">📎 下载文件（<span x-text="item.val"></span>）</a>
+                <span x-show="!item.href" x-text="item.val || '（未填写）'"></span>
+              </div>
+            </div>
+          </template>
+        </div>
+      </div>
+    </div>
+  </template>
+
+  <!-- 加载失败 -->
+  <template x-if="loadError">
+    <main class="container"><div class="empty card" x-text="'加载失败：' + loadError"></div></main>
+  </template>
+
+  <!-- ================= 视图：表单列表 ================= -->
+  <template x-if="view === 'list' && !loading && !loadError">
+    <main class="container">
+      <template x-if="forms.length === 0">
+        <div class="empty card">还没有表单<br><span class="muted">点击右上角「新建表单」创建第一个表单</span></div>
+      </template>
+      <template x-if="forms.length > 0">
+        <div class="card tbl-card">
+          <table class="tbl">
+            <thead><tr><th>表单</th><th>状态</th><th>提交数</th><th>创建时间</th><th class="th-ops">操作</th></tr></thead>
+            <tbody>
+              <template x-for="f in forms" :key="f.id">
+                <tr>
+                  <td>
+                    <div class="f-title" x-text="f.title"></div>
+                    <div class="f-sub" x-text="'/f/' + f.slug"></div>
+                  </td>
+                  <td><span class="badge" :class="stCls(f.status)" x-text="stText(f.status)"></span></td>
+                  <td class="num" x-text="f.submission_count"></td>
+                  <td class="muted nowrap" x-text="fmtTime(f.created_at)"></td>
+                  <td class="ops">
+                    <a class="btn xs" :href="'/f/' + f.slug" target="_blank">填写页</a>
+                    <button class="btn xs" x-show="has('form:update')" @click="editForm(f.id)">编辑</button>
+                    <button class="btn xs" @click="openData(f.id)">数据</button>
+                    <button class="btn xs" @click="openStats(f.id)">统计</button>
+                    <button class="btn xs" x-show="has('form:publish')" :class="f.status === 'published' ? '' : 'primary'" @click="toggleStatus(f)"
+                            x-text="f.status === 'published' ? '关闭收集' : '发布'"></button>
+                    <button class="btn xs" x-show="has('form:update')" :class="f.show_on_home ? '' : 'muted-btn'" @click="toggleHome(f)"
+                            x-text="f.show_on_home ? '首页显示中' : '不在首页'"
+                            title="设置是否在前台首页「表单中心」展示（仅发布状态对外可见）"></button>
+                    <button class="btn xs" @click="openQr(f)">二维码</button>
+                    <button class="btn xs" x-show="has('form:create')" @click="cloneForm(f)">克隆</button>
+                    <button class="btn xs danger" x-show="has('form:delete')" @click="delForm(f)">删除</button>
+                  </td>
+                </tr>
+              </template>
+            </tbody>
+          </table>
+        </div>
+      </template>
+    </main>
+  </template>
+
+  <!-- ================= 视图：表单编辑 ================= -->
+  <template x-if="view === 'edit' && editing && !loading">
+    <main class="container narrow">
+      <section class="card">
+        <label class="lbl">表单标题 <span class="req">*</span></label>
+        <input class="ipt" maxlength="100" placeholder="例如：2025 年会活动报名" x-model="editing.title">
+        <label class="lbl">表单描述</label>
+        <textarea class="ipt" rows="3" placeholder="将展示在填写页顶部（选填）" x-model="editing.description"></textarea>
+        <label class="lbl">同一 IP 提交上限</label>
+        <input class="ipt ipt-num" type="number" min="0" max="999" step="1" x-model="editing.ipLimit">
+        <div class="field-hint">0 表示不限制；达到上限的 IP 再次提交将被拒绝</div>
+        <label class="lbl">首页展示</label>
+        <label class="home-toggle"><input type="checkbox" x-model="editing.showOnHome">在前台首页「表单中心」中展示该表单（仅发布状态对外可见）</label>
+        <label class="lbl">新提交通知（Webhook）</label>
+        <div class="webhook-list">
+          <template x-if="!webhookPresets.length">
+            <span class="muted">暂无预设，请到顶部「Webhook」页添加（需超级管理员）</span>
+          </template>
+          <template x-for="w in webhookPresets" :key="w.id">
+            <label class="home-toggle">
+              <input type="checkbox" :value="w.id" x-model="editing.webhookIds">
+              <span x-text="w.name"></span>
+            </label>
+          </template>
+        </div>
+        <template x-if="editing.id">
+          <div class="meta-row">
+            <span class="badge" :class="stCls(editing.status)" x-text="stText(editing.status)"></span>
+            <span class="muted">填写链接</span>
+            <a :href="'/f/' + editing.slug" target="_blank" x-text="'/f/' + editing.slug"></a>
+            <button class="btn xs" @click="copyLink()">复制</button>
+            <select class="ipt sel" x-model="editing.status">
+              <option value="draft">草稿</option>
+              <option value="published">发布（收集中）</option>
+              <option value="closed">关闭</option>
+            </select>
+          </div>
+        </template>
+        <template x-if="!editing.id">
+          <div class="meta-row muted">保存后可发布并获得填写链接</div>
+        </template>
+      </section>
+
+      <section class="card">
+        <div class="card-head">
+          <h3>字段设置</h3>
+          <div class="add-field">
+            <select class="ipt sel" x-model="newFieldType">
+              <% FIELD_TYPES.forEach(([t, l]) => { %><option value="<%= t %>"><%= l %></option><% }) %>
+            </select>
+            <button class="btn xl" @click="addField()">＋ 添加字段</button>
+          </div>
+        </div>
+
+        <template x-if="!editing.id && editing.fields.length === 0">
+          <div class="tpl-row">
+            <span class="muted">从模板开始：</span>
+            <button class="btn xs" @click="applyTemplate('signup')">活动报名</button>
+            <button class="btn xs" @click="applyTemplate('survey')">满意度调查</button>
+            <button class="btn xs" @click="applyTemplate('register')">信息登记</button>
+            <button class="btn xs" @click="applyTemplate('feedback')">反馈收集</button>
+          </div>
+        </template>
+        <template x-if="editing.fields.length === 0">
+          <div class="empty small">暂无字段，请点击「添加字段」创建第一个问题</div>
+        </template>
+
+        <template x-for="(f, i) in editing.fields" :key="f.id">
+          <div class="field-row">
+            <div class="fr-head">
+              <span class="fr-idx" x-text="(i + 1) + '.'"></span>
+              <input class="ipt fr-label" placeholder="字段标题" x-model="f.label">
+              <select class="ipt sel fr-type" :value="f.type" @change="changeType(f, $event.target.value)">
+                <% FIELD_TYPES.forEach(([t, l]) => { %><option value="<%= t %>"><%= l %></option><% }) %>
+              </select>
+              <label class="fr-req"><input type="checkbox" x-model="f.required">必填</label>
+              <label class="fr-req" title="在数据列表中显示此列"><input type="checkbox" x-model="f.inList">列表</label>
+              <label class="fr-req" title="在筛选条件中提供此字段"><input type="checkbox" x-model="f.inFilter">筛选</label>
+              <label class="fr-req" title="在统计分析中显示此字段"><input type="checkbox" x-model="f.inStats">统计</label>
+              <span class="fr-ops">
+                <button class="btn xs" :disabled="i === 0" @click="moveField(i, -1)">↑</button>
+                <button class="btn xs" :disabled="i === editing.fields.length - 1" @click="moveField(i, 1)">↓</button>
+                <button class="btn xs danger" @click="delField(i)">删除</button>
+              </span>
+            </div>
+
+            <template x-if="isTextLike(f.type)">
+              <input class="ipt fr-ph" placeholder="提示文字（选填）" x-model="f.placeholder">
+            </template>
+            <template x-if="isChoice(f.type)">
+              <textarea class="ipt fr-opts" rows="2" placeholder="每行一个选项"
+                        :value="(f.options || []).join('\n')"
+                        @input="f.options = $event.target.value.split('\n').map(s => s.trim()).filter(Boolean)"></textarea>
+            </template>
+
+            <!-- 字段约束（按类型显示） -->
+            <template x-if="f.type === 'text' || f.type === 'textarea'">
+              <div class="fr-cons">
+                <label class="cons-item"><span>最少字符</span><input type="number" class="ipt cons-ipt" x-model="f.minLength"></label>
+                <label class="cons-item"><span>最多字符</span><input type="number" class="ipt cons-ipt" x-model="f.maxLength"></label>
+                <label class="cons-item grow"><span>正则校验</span><input class="ipt cons-ipt" placeholder="选填，如 ^1[0-9]{10}$" x-model="f.pattern"></label>
+              </div>
+            </template>
+            <template x-if="f.type === 'number'">
+              <div class="fr-cons">
+                <label class="cons-item"><span>最小值</span><input type="number" class="ipt cons-ipt" x-model="f.min"></label>
+                <label class="cons-item"><span>最大值</span><input type="number" class="ipt cons-ipt" x-model="f.max"></label>
+              </div>
+            </template>
+            <template x-if="f.type === 'date'">
+              <div class="fr-cons">
+                <label class="cons-item"><span>最早日期</span><input type="date" class="ipt cons-ipt" x-model="f.min"></label>
+                <label class="cons-item"><span>最晚日期</span><input type="date" class="ipt cons-ipt" x-model="f.max"></label>
+              </div>
+            </template>
+            <template x-if="f.type === 'checkbox'">
+              <div class="fr-cons">
+                <label class="cons-item"><span>最少选</span><input type="number" class="ipt cons-ipt" x-model="f.minSelect"></label>
+                <label class="cons-item"><span>最多选</span><input type="number" class="ipt cons-ipt" x-model="f.maxSelect"></label>
+              </div>
+            </template>
+            <template x-if="f.type === 'file'">
+              <div class="fr-cons">
+                <label class="cons-item"><span>最大 MB</span><input type="number" class="ipt cons-ipt" x-model="f.maxSizeMB"></label>
+                <label class="cons-item grow"><span>允许类型</span><input class="ipt cons-ipt" placeholder="如 jpg,png,pdf" x-model="f.accept"></label>
+              </div>
+            </template>
+          </div>
+        </template>
+      </section>
+    </main>
+  </template>
+
+  <!-- ================= 视图：提交数据 ================= -->
+  <template x-if="view === 'data' && d.form && !loading">
+    <main class="container wide">
+      <div class="toolbar">
+        <div class="tabs">
+          <button class="btn sm tab active" @click="openData(d.formId)">数据列表</button>
+          <button class="btn sm tab" @click="openStats(d.formId)">统计分析</button>
+        </div>
+        <span class="badge" :class="stCls(d.form.status)" x-text="stText(d.form.status)"></span>
+        <button class="btn sm" @click="d.showFilters = !d.showFilters">⚙ 筛选
+          <template x-if="fltCount > 0"><span x-text="'（' + fltCount + '）'"></span></template>
+        </button>
+        <span class="spacer"></span>
+        <input class="ipt search" placeholder="搜索提交内容…" x-model="d.q" @keydown.enter="doSearch()">
+        <button class="btn sm" @click="doSearch()">搜索</button>
+      </div>
+
+      <div class="filter-panel" :class="{ open: d.showFilters }">
+        <div class="flt-grid">
+          <label class="flt-item">
+            <span class="flt-label">提交时间从</span>
+            <input type="date" class="ipt flt-ipt" x-model="d.from">
+          </label>
+          <label class="flt-item">
+            <span class="flt-label">至</span>
+            <input type="date" class="ipt flt-ipt" x-model="d.to">
+          </label>
+          <template x-for="f in filterFields" :key="f.id">
+            <label class="flt-item">
+              <span class="flt-label" x-text="f.label"></span>
+              <template x-if="isChoice(f.type)">
+                <select class="ipt flt-ipt" x-model="d.filters[f.id]">
+                  <option value="">全部</option>
+                  <template x-for="o in (f.options || [])" :key="o">
+                    <option :value="o" x-text="o"></option>
+                  </template>
+                </select>
+              </template>
+              <template x-if="f.type === 'date'">
+                <input type="date" class="ipt flt-ipt" x-model="d.filters[f.id]">
+              </template>
+              <template x-if="!isChoice(f.type) && f.type !== 'date'">
+                <input type="text" class="ipt flt-ipt" placeholder="包含…" x-model="d.filters[f.id]">
+              </template>
+            </label>
+          </template>
+        </div>
+        <div class="flt-ops">
+          <button class="btn sm primary" @click="applyFilters()">应用筛选</button>
+          <button class="btn sm" @click="resetFilters()">重置筛选</button>
+          <span class="muted">选择类字段按选项精确匹配；日期按天匹配；文本/数字/邮箱按包含匹配</span>
+        </div>
+      </div>
+
+      <template x-if="d.total === 0">
+        <div class="empty card">暂无符合条件的提交数据<br>
+          <span class="muted" x-text="fltCount || d.q ? '试试调整或重置筛选条件' : '在填写页提交后，数据将实时出现在这里'"></span>
+        </div>
+      </template>
+
+      <template x-if="d.total > 0">
+        <div>
+          <div class="card tbl-card">
+            <div class="tbl-scroll">
+              <table class="tbl data-tbl">
+                <thead>
+                  <tr>
+                    <th>ID</th><th>提交时间</th><th>IP</th>
+                    <template x-for="f in listFields" :key="f.id"><th x-text="f.label"></th></template>
+                    <th class="th-ops">操作</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <template x-for="r in d.rows" :key="r.id">
+                    <tr>
+                      <td class="num" x-text="r.id"></td>
+                      <td class="muted nowrap" x-text="fmtTime(r.created_at)"></td>
+                      <td class="muted nowrap" x-text="r.ip || '-'"></td>
+                      <template x-for="f in listFields" :key="f.id">
+                        <td class="td-val" :title="cellText(r, f)" x-text="cellText(r, f).length > 50 ? cellText(r, f).slice(0, 50) + '…' : cellText(r, f)"></td>
+                      </template>
+                      <td class="ops">
+                        <button class="btn xs" @click="showDetail(r)">详情</button>
+                        <button class="btn xs danger" x-show="has('data:delete')" @click="delRow(r.id)">删除</button>
+                      </td>
+                    </tr>
+                  </template>
+                </tbody>
+              </table>
+            </div>
+          </div>
+          <div class="pager">
+            <button class="btn sm" :disabled="d.page <= 1" @click="d.page--; loadData()">‹ 上一页</button>
+            <span class="muted" x-text="'第 ' + d.page + ' / ' + d.pages + ' 页 · 共 ' + d.total + ' 条'"></span>
+            <button class="btn sm" :disabled="d.page >= d.pages" @click="d.page++; loadData()">下一页 ›</button>
+          </div>
+        </div>
+      </template>
+    </main>
+  </template>
+
+  <!-- ================= 视图：统计分析 ================= -->
+  <template x-if="view === 'stats' && s && !loading">
+    <main class="container wide">
+      <div class="toolbar">
+        <div class="tabs">
+          <button class="btn sm tab" @click="openData(sform.id)">数据列表</button>
+          <button class="btn sm tab active">统计分析</button>
+        </div>
+        <span class="spacer"></span>
+        <button class="btn sm" :class="statsRange.days === 7 && !statsRange.from ? 'tab active' : ''" @click="setStatsDays(7)">近 7 天</button>
+        <button class="btn sm" :class="statsRange.days === 14 && !statsRange.from ? 'tab active' : ''" @click="setStatsDays(14)">近 14 天</button>
+        <button class="btn sm" :class="statsRange.days === 30 && !statsRange.from ? 'tab active' : ''" @click="setStatsDays(30)">近 30 天</button>
+        <input type="date" class="ipt flt-ipt" x-model="statsRange.from">
+        <span class="muted">至</span>
+        <input type="date" class="ipt flt-ipt" x-model="statsRange.to">
+        <button class="btn sm primary" @click="applyStatsRange()">应用</button>
+      </div>
+
+      <div class="stat-cards">
+        <div class="stat-card"><div class="stat-label">总提交</div><div class="stat-num" x-text="s.total"></div></div>
+        <div class="stat-card"><div class="stat-label">今日提交</div><div class="stat-num" x-text="s.today"></div></div>
+        <div class="stat-card"><div class="stat-label">近 7 天</div><div class="stat-num" x-text="s.week"></div></div>
+        <div class="stat-card"><div class="stat-label">独立 IP</div><div class="stat-num" x-text="s.ips"></div></div>
+      </div>
+
+      <section class="card">
+        <h3>近 14 天提交趋势</h3>
+        <div class="bar-chart">
+          <template x-for="t in s.trend" :key="t.date">
+            <div class="bar-col" :title="t.date + '：' + t.count + ' 条'">
+              <div class="bar-num" x-text="t.count > 0 ? t.count : ''"></div>
+              <div class="bar" :style="'height:' + Math.max(2, Math.round((t.count / sMax) * 100)) + '%'"></div>
+              <div class="bar-label" x-text="t.date.slice(5)"></div>
+            </div>
+          </template>
+        </div>
+      </section>
+
+      <template x-if="s.total === 0">
+        <div class="empty card">暂无提交数据，发布表单收集后即可看到统计</div>
+      </template>
+
+      <template x-for="f in statFields" :key="f.id">
+        <section class="card">
+          <div class="stat-head">
+            <h3 x-text="f.label"></h3>
+            <span class="ftype" x-text="typeLabel(f.type)"></span>
+            <span class="muted" x-text="'填写率 ' + (s.total ? Math.round((f.answered / s.total) * 100) : 0) + '%'"></span>
+          </div>
+
+          <template x-if="isChoice(f.type)">
+            <div class="opt-list">
+              <template x-if="f.options && f.options.length">
+                <div>
+                  <template x-for="o in f.options" :key="o.value">
+                    <div class="opt-row">
+                      <div class="opt-name" :title="o.value" x-text="o.value"></div>
+                      <div class="opt-bar"><div class="opt-fill" :style="'width:' + optW(f, o) + '%'"></div></div>
+                      <div class="opt-num" x-text="o.count + ' · ' + o.pct + '%'"></div>
+                    </div>
+                  </template>
+                </div>
+              </template>
+              <template x-if="!f.options || !f.options.length"><div class="muted">暂无数据</div></template>
+            </div>
+          </template>
+
+          <template x-if="f.type === 'number' && f.avg !== undefined">
+            <div class="num-grid">
+              <div class="num-item"><div class="num-label">填写次数</div><div class="num-v" x-text="f.answered"></div></div>
+              <div class="num-item"><div class="num-label">平均值</div><div class="num-v" x-text="round2(f.avg)"></div></div>
+              <div class="num-item"><div class="num-label">最大值</div><div class="num-v" x-text="f.max"></div></div>
+              <div class="num-item"><div class="num-label">最小值</div><div class="num-v" x-text="f.min"></div></div>
+              <div class="num-item"><div class="num-label">总和</div><div class="num-v" x-text="round2(f.sum)"></div></div>
+            </div>
+          </template>
+          <template x-if="f.type === 'number' && f.avg === undefined">
+            <div class="muted">暂无数据</div>
+          </template>
+
+          <template x-if="!isChoice(f.type) && f.type !== 'number'">
+            <div class="opt-list">
+              <template x-if="f.top && f.top.length">
+                <div>
+                  <template x-for="t in f.top" :key="t.value">
+                    <div class="opt-row">
+                      <div class="opt-name" :title="t.value" x-text="t.value"></div>
+                      <div class="opt-num" x-text="t.count + ' 次'"></div>
+                    </div>
+                  </template>
+                </div>
+              </template>
+              <template x-if="!f.top || !f.top.length"><div class="muted">暂无数据</div></template>
+            </div>
+          </template>
+        </section>
+      </template>
+    </main>
+  </template>
+
+  <!-- ================= 视图：Webhook 管理 ================= -->
+  <template x-if="view === 'webhooks' && !loading && !loadError">
+    <main class="container narrow">
+      <section class="card">
+        <div class="card-head"><h3 x-text="whForm.id ? '编辑 Webhook' : '添加 Webhook'"></h3></div>
+        <div class="adm-form" style="margin-bottom:20px;">
+          <input class="ipt" placeholder="名称（如：运营群机器人）" x-model="whForm.name">
+          <select class="ipt sel" x-model="whForm.method" title="请求方式">
+            <option value="POST">POST</option>
+            <option value="GET">GET</option>
+            <option value="PUT">PUT</option>
+          </select>
+          <button class="btn primary" @click="saveWebhook()" x-text="whForm.id ? '保存修改' : '添加'"></button>
+          <button class="btn" x-show="whForm.id" @click="cancelWhEdit()">取消</button>
+        </div>
+        <div class="adm-form">
+          <input class="ipt" placeholder="Webhook 地址（https://...，支持占位符）" x-model="whForm.url">
+        </div>
+        <label class="lbl">请求数据（JSON 模板，留空 = 使用内置通用 JSON 报文）</label>
+        <textarea class="ipt" rows="5" x-model="whForm.body" placeholder='{"msgtype":"text","text":{"content":"【{{title}}】新提交 #{{submissionId}}&#10;{{fields}}"}}'></textarea>
+        <div class="field-hint">
+          可用占位符：<code>{{title}}</code> 表单名、<code>{{formId}}</code>、<code>{{submissionId}}</code>、<code>{{time}}</code>、<code>{{fields}}</code> 逐行「字段：值」、<code>{{json}}</code> 提交数据 JSON。地址与请求数据均支持占位符；GET 请求不携带请求数据；含占位符的模板不做 JSON 预检。
+        </div>
+      </section>
+
+      <div class="card tbl-card">
+        <table class="tbl">
+          <thead><tr><th>名称</th><th>方式</th><th>地址</th><th class="th-ops">操作</th></tr></thead>
+          <tbody>
+            <template x-for="w in webhooks" :key="w.id">
+              <tr>
+                <td><div class="f-title" x-text="w.name"></div></td>
+                <td><span class="ftype" x-text="w.method || 'POST'"></span></td>
+                <td class="td-val" :title="w.url" x-text="w.url"></td>
+                <td class="ops">
+                  <button class="btn xs" @click="editWebhook(w)">编辑</button>
+                  <button class="btn xs danger" @click="delWebhook(w)">删除</button>
+                </td>
+              </tr>
+            </template>
+          </tbody>
+        </table>
+      </div>
+      <p class="muted">预设后可在每个表单的设置里勾选启用；删除预设会自动解除所有表单的引用。</p>
+    </main>
+  </template>
+
+  <!-- ================= 视图：管理员管理 ================= -->
+  <template x-if="view === 'admins' && !loading && !loadError">
+    <main class="container narrow">
+      <section class="card">
+        <div class="card-head"><h3>添加管理员</h3></div>
+        <div class="adm-form">
+          <input class="ipt" placeholder="用户名（2-32 位）" x-model="newAdmin.username">
+          <input class="ipt" type="password" placeholder="密码（至少 6 位）" x-model="newAdmin.password">
+          <select class="ipt sel" x-model="newAdmin.role">
+            <option value="viewer">观察者（只看数据与统计）</option>
+            <option value="editor">编辑（可管理表单与数据）</option>
+            <option value="super">超级管理员（全部权限）</option>
+          </select>
+          <button class="btn primary" @click="addAdmin()">添加</button>
+        </div>
+      </section>
+
+      <div class="card tbl-card">
+        <table class="tbl">
+          <thead><tr><th>用户名</th><th>角色</th><th>创建时间</th><th class="th-ops">操作</th></tr></thead>
+          <tbody>
+            <template x-for="a in admins" :key="a.id">
+              <tr>
+                <td>
+                  <div class="f-title" x-text="a.username"></div>
+                  <div class="f-sub" x-show="me && a.id === me.id">当前账号</div>
+                </td>
+                <td>
+                  <select class="ipt sel" :value="a.role" :disabled="me && a.id === me.id"
+                          @change="changeRole(a, $event.target.value)">
+                    <option value="viewer">观察者</option>
+                    <option value="editor">编辑</option>
+                    <option value="super">超级管理员</option>
+                  </select>
+                </td>
+                <td class="muted nowrap" x-text="fmtTime(a.created_at)"></td>
+                <td class="ops">
+                  <button class="btn xs" @click="resetPwd(a)">重置密码</button>
+                  <button class="btn xs danger" :disabled="me && a.id === me.id" @click="delAdmin(a)">删除</button>
+                </td>
+              </tr>
+            </template>
+          </tbody>
+        </table>
+      </div>
+      <p class="muted">权限说明：超级管理员 = 全部权限（含管理员管理）；编辑 = 管理表单与数据（不能删除表单、不能清空数据）；观察者 = 只看数据、统计与导出。角色修改即时生效。</p>
+    </main>
+  </template>
+
+  <!-- 二维码弹窗 -->
+  <template x-if="qr">
+    <div class="mask" @click.self="qr = null">
+      <div class="modal">
+        <div class="modal-head">
+          <h3 x-text="'扫码填写：' + qr.title"></h3>
+          <button class="btn xs" @click="qr = null">关闭</button>
+        </div>
+        <div class="qr-box"><img :src="'/admin/api/forms/' + qr.id + '/qrcode'" alt="填写页二维码"></div>
+        <p class="muted" style="text-align:center;">链接：<a :href="'/f/' + qr.slug" target="_blank" x-text="'/f/' + qr.slug"></a></p>
+      </div>
+    </div>
+  </template>
+
+  <!-- 修改密码弹窗 -->
+  <template x-if="pwd.open">
+    <div class="mask" @click.self="pwd.open = false">
+      <div class="modal">
+        <div class="modal-head">
+          <h3>修改密码</h3>
+          <button class="btn xs" @click="pwd.open = false">关闭</button>
+        </div>
+        <label class="lbl">旧密码</label>
+        <input type="password" class="ipt" x-model="pwd.old" autocomplete="current-password">
+        <label class="lbl">新密码（至少 6 位）</label>
+        <input type="password" class="ipt" x-model="pwd.n1" autocomplete="new-password">
+        <label class="lbl">确认新密码</label>
+        <input type="password" class="ipt" x-model="pwd.n2" autocomplete="new-password">
+        <div class="flt-ops" style="margin-top:16px;">
+          <button class="btn primary" @click="submitPwd()">保存</button>
+          <button class="btn" @click="pwd.open = false">取消</button>
+        </div>
+      </div>
+    </div>
+  </template>
+
+  <!-- ================= 视图：审计日志 ================= -->
+  <template x-if="view === 'audit' && !loading && !loadError">
+    <main class="container wide">
+      <div class="card tbl-card">
+        <table class="tbl">
+          <thead><tr><th>时间</th><th>操作者</th><th>动作</th><th>对象</th><th>详情</th></tr></thead>
+          <tbody>
+            <template x-for="l in auditLogs" :key="l.id">
+              <tr>
+                <td class="muted nowrap" x-text="fmtTime(l.created_at)"></td>
+                <td x-text="l.username"></td>
+                <td x-text="actionLabel(l.action)"></td>
+                <td x-text="l.target"></td>
+                <td class="muted" x-text="l.detail"></td>
+              </tr>
+            </template>
+          </tbody>
+        </table>
+      </div>
+      <p class="muted">仅保留最近 500 条记录。</p>
+    </main>
+  </template>
+
+</div>
+  <script src="/admin-app.js" defer></script>
+  <script src="/vendor/alpine.js" defer></script>
+</body>
+</html>

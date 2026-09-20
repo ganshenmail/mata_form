@@ -1,0 +1,131 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title><%= form ? form.title  : '表单填写' %></title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%93%8B%3C/text%3E%3C/svg%3E" />
+  <link rel="stylesheet" href="/app.css" />
+</head>
+<body class="page-fill">
+<% if (!form) { %>
+  <div class="form-card state-card">
+    <div class="state-icon">📄</div>
+    <h2>表单不存在</h2>
+    <p class="muted">链接可能有误，或表单已被删除</p>
+    <a class="btn" href="/admin">返回管理后台</a>
+  </div>
+<% } else if (form.status === 'draft') { %>
+  <div class="form-card state-card">
+    <div class="state-icon">🕒</div>
+    <h2>表单尚未发布</h2>
+    <p class="muted">请稍后再来</p>
+  </div>
+<% } else if (form.status === 'closed') { %>
+  <div class="form-card state-card">
+    <div class="state-icon">🔒</div>
+    <h2>表单已停止收集</h2>
+    <p class="muted">感谢您的关注</p>
+  </div>
+<% } else if (reachedLimit) { %>
+  <div class="form-card state-card">
+    <div class="state-icon">✅</div>
+    <h2>您已提交过</h2>
+    <p class="muted">该表单限制了同一 IP 的提交次数，无法再次填写</p>
+  </div>
+<% } else { %>
+  <div class="form-card" x-data="filler">
+    <template x-if="!done">
+      <div>
+        <header class="form-head">
+          <h1><%= form.title %></h1>
+          <% if (form.description) { %><div class="form-desc"><%= form.description %></div><% } %>
+        </header>
+        <form id="the-form" @submit.prevent="submit()" @input.debounce.800ms="saveDraft()" novalidate>
+          <div class="form-banner" x-show="banner" x-text="banner"></div>
+          <% form.fields.forEach((f) => { %>
+          <div class="f-item" data-fitem="<%= f.id %>" :class="{ err: errors['<%= f.id %>'] }">
+            <label class="f-label"><%= f.label %><% if (f.required) { %><span class="req">*</span><% } %></label>
+            <% if (f.type === 'textarea') { %>
+            <textarea class="ipt" rows="4" x-model="values['<%= f.id %>']" placeholder="<%= f.placeholder || '' %>"<% if (f.maxLength) { %> maxlength="<%= f.maxLength %>"<% } %>></textarea>
+            <% } else if (f.type === 'number') { %>
+            <input class="ipt" type="number" step="any" x-model="values['<%= f.id %>']" placeholder="<%= f.placeholder || '' %>"<% if (f.min !== undefined && f.min !== '') { %> min="<%= f.min %>"<% } %><% if (f.max !== undefined && f.max !== '') { %> max="<%= f.max %>"<% } %>>
+            <% } else if (f.type === 'email') { %>
+            <input class="ipt" type="email" x-model="values['<%= f.id %>']" placeholder="<%= f.placeholder || '' %>">
+            <% } else if (f.type === 'phone') { %>
+            <input class="ipt" type="tel" inputmode="numeric" maxlength="11" x-model="values['<%= f.id %>']" placeholder="<%= f.placeholder || '' %>">
+            <% } else if (f.type === 'date') { %>
+            <input class="ipt" type="date" x-model="values['<%= f.id %>']"<% if (f.min) { %> min="<%= f.min %>"<% } %><% if (f.max) { %> max="<%= f.max %>"<% } %>>
+            <% } else if (f.type === 'radio') { %>
+            <div class="opt-group">
+              <% (f.options || []).forEach((o) => { %>
+              <label class="opt"><input type="radio" name="<%= f.id %>" value="<%= o %>" x-model="values['<%= f.id %>']"><span><%= o %></span></label>
+              <% }) %>
+            </div>
+            <% } else if (f.type === 'checkbox') { %>
+            <div class="opt-group">
+              <% (f.options || []).forEach((o) => { %>
+              <label class="opt"><input type="checkbox" name="<%= f.id %>" value="<%= o %>" x-model="values['<%= f.id %>']"><span><%= o %></span></label>
+              <% }) %>
+            </div>
+            <% } else if (f.type === 'select') { %>
+            <select class="ipt" x-model="values['<%= f.id %>']">
+              <option value="">请选择</option>
+              <% (f.options || []).forEach((o) => { %><option value="<%= o %>"><%= o %></option><% }) %>
+            </select>
+            <% } else if (f.type === 'file') { %>
+            <input class="ipt ipt-file" type="file" name="<%= f.id %>" data-file="<%= f.id %>"<% if (f.accept) { %> accept="<%= f.accept.split(',').map(s => s.trim()).filter(Boolean).map(s => s.startsWith('.') ? s : '.' + s).join(',') %>"<% } %>>
+            <div class="field-hint"><% if (f.maxSizeMB) { %>单个不超过 <%= f.maxSizeMB %>MB<% } %><% if (f.accept) { %>，允许类型：<%= f.accept %><% } %></div>
+            <% } else if (f.type === 'region') { %>
+            <div class="region-row">
+              <select class="ipt" x-model="values['<%= f.id %>:p']" @change="values['<%= f.id %>:c'] = ''; values['<%= f.id %>:d'] = ''">
+                <option value="">省份</option>
+                <template x-for="p in regionOptions('<%= f.id %>', 1)" :key="p.name">
+                  <option :value="p.name" x-text="p.name"></option>
+                </template>
+              </select>
+              <select class="ipt" x-model="values['<%= f.id %>:c']" @change="values['<%= f.id %>:d'] = ''" :disabled="!values['<%= f.id %>:p']">
+                <option value="">城市</option>
+                <template x-for="ct in regionOptions('<%= f.id %>', 2)" :key="ct.name">
+                  <option :value="ct.name" x-text="ct.name"></option>
+                </template>
+              </select>
+              <select class="ipt" x-model="values['<%= f.id %>:d']" :disabled="!values['<%= f.id %>:c']">
+                <option value="">区县</option>
+                <template x-for="d in regionOptions('<%= f.id %>', 3)" :key="d">
+                  <option :value="d" x-text="d"></option>
+                </template>
+              </select>
+            </div>
+            <% } else { %>
+            <input class="ipt" type="text" x-model="values['<%= f.id %>']" placeholder="<%= f.placeholder || '' %>"<% if (f.maxLength) { %> maxlength="<%= f.maxLength %>"<% } %>>
+            <% } %>
+            <div class="f-err" x-show="errors['<%= f.id %>']" x-text="errors['<%= f.id %>']"></div>
+          </div>
+          <% }) %>
+          <div class="draft-note" x-show="draftNote">
+            <span x-text="draftNote"></span>
+            <button class="btn xs" type="button" @click="clearDraft()">清空草稿</button>
+          </div>
+          <div class="hp" aria-hidden="true">
+            <input type="text" name="_website" tabindex="-1" autocomplete="off" x-model="honeypot">
+          </div>
+          <button class="submit-btn" type="submit" :disabled="busy" x-text="busy ? '提交中…' : '提 交'"></button>
+        </form>
+      </div>
+    </template>
+    <template x-if="done">
+      <div class="state-card">
+        <div class="state-icon done">✅</div>
+        <h2>提交成功</h2>
+        <p class="muted">感谢您的填写！</p>
+        <button class="btn" @click="reset()">再填一份</button>
+      </div>
+    </template>
+  </div>
+<% } %>
+  <script>window.__FORM_FIELDS__ = <%- fieldsJson %>;</script>
+  <script src="/form-app.js" defer></script>
+  <script src="/vendor/alpine.js" defer></script>
+</body>
+</html>

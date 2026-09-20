@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>表单中心</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%93%8B%3C/text%3E%3C/svg%3E" />
+  <link rel="stylesheet" href="/app.css" />
+</head>
+<body>
+  <div class="home-wrap">
+    <header class="home-head">
+      <h1>📋 表单中心</h1>
+      <p class="muted">选择一个表单开始填写</p>
+    </header>
+    <% if (!forms.length) { %>
+    <div class="form-card state-card">
+      <div class="state-icon">📭</div>
+      <h2>暂无开放中的表单</h2>
+      <p class="muted">请稍后再来</p>
+    </div>
+    <% } else { %>
+    <div class="home-grid">
+      <% forms.forEach((f) => { %>
+      <a class="home-card" href="/f/<%= f.slug %>">
+        <div class="home-card-title"><%= f.title %></div>
+        <% if (f.description) { %><div class="home-card-desc"><%= f.description %></div><% } %>
+        <div class="home-card-go">立即填写 →</div>
+      </a>
+      <% }) %>
+    </div>
+    <% } %>
+  </div>
+</body>
+</html>
